@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "recon"
+version = "0.1.0"
+description = "Reverse engineering of unknown binaries: static analysis first, an AI layer on top of the evidence later."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Vinicius Lemos" }]
+dependencies = ["lief>=0.16", "capstone>=5.0", "networkx>=3.2"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+recon = "recon.cli:main"
+
+[tool.setuptools]
+packages = ["recon"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
