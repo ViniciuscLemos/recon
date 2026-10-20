@@ -8,7 +8,7 @@ Work in progress. The static analysis comes first, and the part that works today
 
 ```bash
 pip install -e .
-recon info program.exe      # format, what it can probably do, sections, imports
+recon info program.exe      # format, what it can probably do, packing hints, sections, imports, exports
 recon strings program.exe   # printable strings with their address
 recon diff old.exe new.exe  # what changed between two versions
 ```
@@ -43,6 +43,17 @@ It reads PE (Windows) and ELF (Linux) files with [LIEF](https://lief.re) and nev
 ```
 
 Without reading a single instruction you can already tell the file writing went away and network code came in, with the server address and what gets sent. The next step is finding which functions changed, which needs the code itself.
+
+`info` also warns when a program looks packed (UPX and similar section names, code with entropy above 7.2, code that is also writable). A packed program keeps its real code compressed until it runs, so its imports and strings say very little, and an empty result shouldn't be trusted.
+
+## Known limits
+
+- Everything is static. A program that downloads or unpacks its code at runtime shows only its loader.
+- Capabilities come from a small table of known functions. Anything called through `GetProcAddress`, or through syscalls directly, isn't seen yet.
+- Strings are plain ASCII and UTF-16 runs of 4 or more visible characters. Encoded or built-at-runtime strings don't show up.
+- Only x86 and x86-64 have been tried. ARM files load, but nothing past the headers has been checked on them.
+
+Testing it on Windows' own binaries (notepad, kernel32, ntdll, Edge) and on broken files turned up a few things that are handled now: MinGW names its longer sections `/4`, `/29`... and the real name (`.debug_info`) sits in a table at the end of the file, a DLL with no entry point used to show the image base as its entry, and a file cut short used to load quietly with nothing in it, which looks just like a program that does nothing.
 
 ## Tests
 
