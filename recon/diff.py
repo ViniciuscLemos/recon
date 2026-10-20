@@ -30,7 +30,10 @@ def _import_names(binary: Binary) -> set[str]:
 
 
 def _string_texts(binary: Binary) -> set[str]:
-    return {s.text for s in extract(binary)}
+    # the import table keeps every imported name (and DLL name) as text too; those already show
+    # up as imports, so listing them again as strings is just noise
+    names = _import_names(binary) | {i.library for i in binary.imports}
+    return {s.text for s in extract(binary)} - names
 
 
 def compare(old: Binary, new: Binary) -> Diff:
