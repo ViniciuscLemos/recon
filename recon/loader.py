@@ -41,7 +41,7 @@ class Binary:
     format: str  # "PE" or "ELF"
     arch: str  # "x86-64", "x86", "arm64", ...
     bits: int
-    entry: int
+    entry: int | None  # None for a DLL or library with no entry point
     image_base: int
     sections: list[Section]
     imports: list[Import]
@@ -52,6 +52,8 @@ class Binary:
     function_ranges: list[tuple[int, int]] = field(default_factory=list)
     # PLT stubs on ELF: stub address -> imported name
     plt: dict[int, str] = field(default_factory=dict)
+    # things that make the analysis incomplete, like a file cut short
+    warnings: list[str] = field(default_factory=list)
     _content: dict[str, tuple[int, bytes]] = field(default_factory=dict, repr=False)
 
     def section_at(self, address: int) -> Section | None:
@@ -79,8 +81,10 @@ class Binary:
 
 def load(path: str | Path) -> Binary:
     path = Path(path)
+    if path.is_dir():
+        raise ValueError(f"{path} is a folder, not a file")
     if not path.is_file():
-        raise FileNotFoundError(path)
+        raise FileNotFoundError(f"no such file: {path}")
     with path.open("rb") as f:
         head = f.read(4)
     if head[:2] == b"MZ":
@@ -98,11 +102,35 @@ _PE_ARCH = {
 }
 
 
+def _coff_long_name(raw: bytes, name: str) -> str:
+    """Section names longer than 8 bytes are stored as "/<offset>" into the COFF string table.
+
+    MinGW does this for its debug sections (/4 is .eh_frame, /29 .debug_info...). LIEF leaves the
+    "/N" as is, so it's resolved here from the string table right after the COFF symbol table.
+    """
+    if not name.startswith("/") or not name[1:].isdigit():
+        return name
+    try:
+        pe_offset = int.from_bytes(raw[0x3C:0x40], "little")
+        symbols_at = int.from_bytes(raw[pe_offset + 12:pe_offset + 16], "little")
+        symbol_count = int.from_bytes(raw[pe_offset + 16:pe_offset + 20], "little")
+    except (IndexError, ValueError):
+        return name
+    if not symbols_at:
+        return name
+    start = symbols_at + symbol_count * 18 + int(name[1:])
+    end = raw.find(b"\0", start)
+    if start >= len(raw) or end < 0:
+        return name
+    return raw[start:end].decode("ascii", "replace") or name
+
+
 def _load_pe(path: Path) -> Binary:
     config = lief.PE.ParserConfig()
     config.parse_exceptions = True
     # read the bytes ourselves: LIEF can't open paths with non-ASCII characters on Windows
-    pe = lief.PE.parse(io.BytesIO(path.read_bytes()), config)
+    raw = path.read_bytes()
+    pe = lief.PE.parse(io.BytesIO(raw), config)
     if pe is None:
         raise ValueError(f"LIEF couldn't parse {path.name}")
     machine = pe.header.machine.name if hasattr(pe.header.machine, "name") else str(pe.header.machine).split(".")[-1]
@@ -110,18 +138,21 @@ def _load_pe(path: Path) -> Binary:
     base = pe.imagebase
     C = lief.PE.Section.CHARACTERISTICS
 
+    warnings = []
     sections, content = [], {}
     for s in pe.sections:
         chars = s.characteristics_lists
+        if s.sizeof_raw_data and s.pointerto_raw_data + s.sizeof_raw_data > len(raw):
+            warnings.append(f"the file is cut short: section {s.name} ends past its end")
         sections.append(Section(
-            name=s.name,
+            name=_coff_long_name(raw, s.name),
             address=base + s.virtual_address,
             size=max(s.virtual_size, s.size),
-            entropy=round(max(s.entropy, 0.0), 2),
+            entropy=round(max(0.0, s.entropy), 2),  # max(-0.0, 0.0) would keep the -0.0
             executable=C.MEM_EXECUTE in chars or C.CNT_CODE in chars,
             writable=C.MEM_WRITE in chars,
         ))
-        content[s.name] = (base + s.virtual_address, bytes(s.content))
+        content[sections[-1].name] = (base + s.virtual_address, bytes(s.content))
 
     imports = [
         Import(library=lib.name, name=entry.name or f"ordinal_{entry.ordinal}", slot=base + entry.iat_address)
@@ -141,10 +172,13 @@ def _load_pe(path: Path) -> Binary:
 
     ranges = [(base + e.rva_start, base + e.rva_end) for e in pe.exceptions if e.rva_end > e.rva_start]
 
+    # an entry RVA of 0 means there is none (a DLL without DllMain, like ntdll), not "the image base"
+    entry = pe.entrypoint if pe.optional_header.addressof_entrypoint else None
+
     return Binary(
-        path=path, format="PE", arch=arch, bits=bits, entry=pe.entrypoint, image_base=base,
+        path=path, format="PE", arch=arch, bits=bits, entry=entry, image_base=base,
         sections=sections, imports=imports, exports=exports, symbols=symbols,
-        function_ranges=sorted(set(ranges)), _content=content,
+        function_ranges=sorted(set(ranges)), warnings=warnings, _content=content,
     )
 
 
@@ -162,6 +196,9 @@ def _load_elf(path: Path) -> Binary:
     if elf is None:
         raise ValueError(f"LIEF couldn't parse {path.name}")
     machine = elf.header.machine_type.name if hasattr(elf.header.machine_type, "name") else str(elf.header.machine_type).split(".")[-1]
+    # LIEF accepts a file that is just the ELF magic and returns an empty object
+    if machine == "NONE" and not elf.segments and not elf.sections:
+        raise ValueError(f"{path.name} has an ELF signature but nothing after it")
     arch, bits = _ELF_ARCH.get(machine, (machine.lower(), 64))
     F = lief.ELF.Section.FLAGS
 
@@ -173,7 +210,7 @@ def _load_elf(path: Path) -> Binary:
             name=s.name,
             address=s.virtual_address,
             size=s.size,
-            entropy=round(max(s.entropy, 0.0), 2),
+            entropy=round(max(0.0, s.entropy), 2),  # max(-0.0, 0.0) would keep the -0.0
             executable=s.has(F.EXECINSTR),
             writable=s.has(F.WRITE),
         ))
@@ -196,7 +233,7 @@ def _load_elf(path: Path) -> Binary:
     symbols.update(exports)
 
     binary = Binary(
-        path=path, format="ELF", arch=arch, bits=bits, entry=elf.entrypoint, image_base=0,
+        path=path, format="ELF", arch=arch, bits=bits, entry=elf.entrypoint or None, image_base=0,
         sections=sections, imports=imports, exports=exports, symbols=symbols, _content=content,
     )
     binary.plt = _plt_stubs(binary)
