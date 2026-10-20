@@ -1,4 +1,7 @@
 import json
+import sys
+
+import pytest
 
 from recon.cli import main
 
@@ -31,6 +34,21 @@ def test_info_lists_sections_and_imports(samples, capsys):
     out = capsys.readouterr().out
     assert "sections (" in out
     assert "connect" in out
+
+
+def test_a_program_without_exports_doesnt_list_them(samples, capsys):
+    main(["info", str(samples["v1"])])
+    assert "exports (" not in capsys.readouterr().out
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="uses a Windows system file")
+def test_a_dll_lists_the_first_exports_and_how_many_more(capsys):
+    main(["info", r"C:\Windows\System32\kernel32.dll"])
+    out = capsys.readouterr().out
+    assert "exports (" in out
+    assert "more (`--json` lists all)" in out
+    main(["--json", "info", r"C:\Windows\System32\kernel32.dll"])
+    assert "CreateFileW" in json.loads(capsys.readouterr().out)["exports"]
 
 
 def test_a_file_that_isnt_a_binary_is_an_error(tmp_path, capsys):

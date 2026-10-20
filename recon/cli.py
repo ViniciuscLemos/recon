@@ -10,7 +10,7 @@ import os
 import sys
 from dataclasses import asdict
 
-from . import capabilities
+from . import capabilities, packing
 from .diff import compare
 from .loader import Binary, load
 from .strings import extract
@@ -24,10 +24,16 @@ def _info_data(b: Binary) -> dict:
         "entry": b.entry,
         "sections": [asdict(s) for s in b.sections],
         "imports": [asdict(i) for i in b.imports],
+        "exports": sorted(b.exports.values()),
         "capabilities": [asdict(c) for c in capabilities.find(b)],
+        "packing": [asdict(h) for h in packing.hints(b)],
         "strings": len(extract(b)),
         "warnings": b.warnings,
     }
+
+
+# a DLL like kernel32 exports over a thousand functions; the text view shows the start
+_EXPORTS_SHOWN = 20
 
 
 def _info(path: str, as_json: bool) -> None:
@@ -40,6 +46,8 @@ def _info(path: str, as_json: bool) -> None:
     print(f"{b.path.name}: {b.format} {b.arch}, {entry}")
     for w in b.warnings:
         print(f"warning: {w}")
+    for h in data["packing"]:
+        print(f"may be packed: {h['section']}: {h['reason']}")
     print("\ncan probably")
     for c in data["capabilities"] or [{"name": "(nothing from the known imports)", "evidence": []}]:
         print(f"  {c['name']:<26} {', '.join(c['evidence'])}")
@@ -51,6 +59,12 @@ def _info(path: str, as_json: bool) -> None:
     print(f"\nimports ({len(b.imports)})")
     for i in sorted(b.imports, key=lambda i: (i.library.lower(), i.name)):
         print(f"  {i.library + '!' if i.library else ''}{i.name}")
+    if data["exports"]:
+        print(f"\nexports ({len(data['exports'])})")
+        for name in data["exports"][:_EXPORTS_SHOWN]:
+            print(f"  {name}")
+        if len(data["exports"]) > _EXPORTS_SHOWN:
+            print(f"  ... {len(data['exports']) - _EXPORTS_SHOWN} more (`--json` lists all)")
     print(f"\nstrings: {data['strings']} (`recon strings {path}` lists them)")
 
 
