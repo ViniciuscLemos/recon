@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import asdict
 
@@ -25,6 +26,7 @@ def _info_data(b: Binary) -> dict:
         "imports": [asdict(i) for i in b.imports],
         "capabilities": [asdict(c) for c in capabilities.find(b)],
         "strings": len(extract(b)),
+        "warnings": b.warnings,
     }
 
 
@@ -34,14 +36,18 @@ def _info(path: str, as_json: bool) -> None:
     if as_json:
         print(json.dumps(data, indent=2))
         return
-    print(f"{b.path.name}: {b.format} {b.arch}, entry at {b.entry:#x}")
+    entry = f"entry at {b.entry:#x}" if b.entry is not None else "no entry point"
+    print(f"{b.path.name}: {b.format} {b.arch}, {entry}")
+    for w in b.warnings:
+        print(f"warning: {w}")
     print("\ncan probably")
     for c in data["capabilities"] or [{"name": "(nothing from the known imports)", "evidence": []}]:
         print(f"  {c['name']:<26} {', '.join(c['evidence'])}")
     print(f"\nsections ({len(b.sections)})")
+    width = max([12, *(len(s.name) for s in b.sections)])
     for s in b.sections:
         flags = ("x" if s.executable else "-") + ("w" if s.writable else "-")
-        print(f"  {s.name:<12} {s.address:#012x} {s.size:>8}  {flags}  entropy {s.entropy}")
+        print(f"  {s.name:<{width}} {s.address:#012x} {s.size:>8}  {flags}  entropy {s.entropy}")
     print(f"\nimports ({len(b.imports)})")
     for i in sorted(b.imports, key=lambda i: (i.library.lower(), i.name)):
         print(f"  {i.library + '!' if i.library else ''}{i.name}")
@@ -97,6 +103,14 @@ def main(argv: list[str] | None = None) -> int:
     except (FileNotFoundError, ValueError) as e:
         print(f"recon: {e}", file=sys.stderr)
         return 1
+    except (BrokenPipeError, OSError) as e:
+        # the output went to something that stopped reading (`recon strings x | head`);
+        # on Windows that shows up as EINVAL instead of a broken pipe
+        if isinstance(e, BrokenPipeError) or e.errno == 22:
+            # point stdout at devnull so Python's flush at exit doesn't fail again
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+            return 0
+        raise
     return 0
 
 
