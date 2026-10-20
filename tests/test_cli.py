@@ -4,6 +4,7 @@ import sys
 import pytest
 
 from recon.cli import main
+from recon.loader import load
 
 
 def test_diff_prints_what_v2_added_and_removed(samples, capsys):
@@ -36,9 +37,10 @@ def test_info_lists_sections_and_imports(samples, capsys):
     assert "connect" in out
 
 
-def test_a_program_without_exports_doesnt_list_them(samples, capsys):
+def test_exports_are_listed_only_when_there_are_some(samples, capsys):
+    # a Windows .exe usually exports nothing, while a Linux executable exports _init, main...
     main(["info", str(samples["v1"])])
-    assert "exports (" not in capsys.readouterr().out
+    assert ("exports (" in capsys.readouterr().out) == bool(load(samples["v1"]).exports)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="uses a Windows system file")
