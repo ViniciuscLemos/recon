@@ -23,21 +23,36 @@ class String:
     section: str
 
 
+def _is_debug(name: str) -> bool:
+    # compiler debug info (.debug_info, .debug_line...) is full of source paths and tool versions,
+    # not strings the program uses, and it disappears when the binary is stripped
+    return name.startswith((".debug", ".zdebug"))
+
+
+def _visible(text: str) -> int:
+    return sum(not c.isspace() for c in text)
+
+
 def extract(binary: Binary, *, include_code: bool = False) -> list[String]:
     found: dict[int, String] = {}
     for section in binary.sections:
-        if section.executable and not include_code:
+        if (section.executable and not include_code) or _is_debug(section.name):
             continue
         start, data = binary.section_bytes(section.name)
         for m in _ASCII.finditer(data):
             raw = m.group().decode("ascii")
             text = raw.strip()
-            if len(text) >= MIN_LENGTH:
+            # count only visible characters, so "9!\nI" isn't a 4-character string
+            if _visible(text) >= MIN_LENGTH:
                 # keep the address on the first visible character, past any leading whitespace
                 address = start + m.start() + (len(raw) - len(raw.lstrip()))
                 found[address] = String(address, text, "ascii", section.name)
         for m in _UTF16.finditer(data):
-            found.setdefault(start + m.start(), String(start + m.start(), m.group().decode("utf-16-le"), "utf-16", section.name))
+            raw = m.group().decode("utf-16-le")
+            text = raw.strip()
+            if _visible(text) >= MIN_LENGTH:
+                address = start + m.start() + 2 * (len(raw) - len(raw.lstrip()))
+                found.setdefault(address, String(address, text, "utf-16", section.name))
     return sorted(found.values(), key=lambda s: s.address)
 
 
