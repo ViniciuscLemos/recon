@@ -8,16 +8,22 @@ Work in progress. The static analysis comes first, and the part that works today
 
 ```bash
 pip install -e .
-recon info program.exe      # format, sections, imports
+recon info program.exe      # format, what it can probably do, sections, imports
 recon strings program.exe   # printable strings with their address
-recon diff old.exe new.exe  # imports and strings that changed
+recon diff old.exe new.exe  # what changed between two versions
 ```
 
+Add `--json` before the command (`recon --json info program.exe`) to get JSON instead of text.
+
 It reads PE (Windows) and ELF (Linux) files with [LIEF](https://lief.re) and never runs them.
+
+"What it can probably do" comes from grouping the imported functions: `socket`/`connect`/`send` mean network, `fopen`/`WriteFile` mean writing files, `CreateProcess` means starting other programs, and so on. An import only says the program *can* call something, so each one is listed with the imports behind it. Some come from the compiler's own startup code: every MinGW build imports `LoadLibraryA` and `GetProcAddress`, so "dynamic loading" shows up even in the samples. Telling those apart needs the code analysis that comes next.
 
 `samples/` has two small login programs I wrote to have something to take apart. Version 2 stops writing a local log file and reports each login to a server instead. Compiled with MinGW on my PC, this is what `recon diff` says about them:
 
 ```
++ can     network
+- can     file write
 + import  WSACleanup
 + import  WSAStartup
 + import  __stdio_common_vsprintf
