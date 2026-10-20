@@ -1,3 +1,5 @@
+import json
+
 from recon.cli import main
 
 
@@ -7,6 +9,21 @@ def test_diff_prints_what_v2_added_and_removed(samples, capsys):
     assert "+ import  connect" in out
     assert "- import  fopen" in out
     assert "+ string  '10.0.0.5'" in out
+
+
+def test_diff_starts_with_the_capabilities(samples, capsys):
+    main(["diff", str(samples["v1"]), str(samples["v2"])])
+    first_lines = capsys.readouterr().out.splitlines()[:2]
+    assert first_lines == ["+ can     network", "- can     file write"]
+
+
+def test_json_output_can_be_parsed(samples, capsys):
+    assert main(["--json", "diff", str(samples["v1"]), str(samples["v2"])]) == 0
+    d = json.loads(capsys.readouterr().out)
+    assert "connect" in d["imports_added"]
+    assert main(["--json", "info", str(samples["v2"])]) == 0
+    info = json.loads(capsys.readouterr().out)
+    assert any(c["name"] == "network" for c in info["capabilities"])
 
 
 def test_info_lists_sections_and_imports(samples, capsys):
