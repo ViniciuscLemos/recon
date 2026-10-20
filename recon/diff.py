@@ -7,12 +7,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from . import capabilities
 from .loader import Binary
 from .strings import extract
 
 
 @dataclass
 class Diff:
+    capabilities_added: list[str]
+    capabilities_removed: list[str]
     imports_added: list[str]
     imports_removed: list[str]
     strings_added: list[str]
@@ -20,6 +23,7 @@ class Diff:
 
     @property
     def empty(self) -> bool:
+        # capabilities come from imports, so if those didn't change neither did they
         return not (self.imports_added or self.imports_removed or self.strings_added or self.strings_removed)
 
 
@@ -39,7 +43,11 @@ def _string_texts(binary: Binary) -> set[str]:
 def compare(old: Binary, new: Binary) -> Diff:
     old_imports, new_imports = _import_names(old), _import_names(new)
     old_strings, new_strings = _string_texts(old), _string_texts(new)
+    old_caps = {c.name for c in capabilities.find(old)}
+    new_caps = {c.name for c in capabilities.find(new)}
     return Diff(
+        capabilities_added=sorted(new_caps - old_caps),
+        capabilities_removed=sorted(old_caps - new_caps),
         imports_added=sorted(new_imports - old_imports),
         imports_removed=sorted(old_imports - new_imports),
         strings_added=sorted(new_strings - old_strings),
