@@ -2,4 +2,49 @@
 
 Point it at an unknown binary and it tries to work out what the program does, from the evidence inside the file.
 
-Work in progress. The static analysis comes first; the plan is in the notes below as it grows.
+Work in progress. The static analysis comes first, and the part that works today is the cheap one: reading the file, its imports and strings, and comparing two versions of the same program.
+
+## What works so far
+
+```bash
+pip install -e .
+recon info program.exe      # format, sections, imports
+recon strings program.exe   # printable strings with their address
+recon diff old.exe new.exe  # imports and strings that changed
+```
+
+It reads PE (Windows) and ELF (Linux) files with [LIEF](https://lief.re) and never runs them.
+
+`samples/` has two small login programs I wrote to have something to take apart. Version 2 stops writing a local log file and reports each login to a server instead. Compiled with MinGW on my PC, this is what `recon diff` says about them:
+
+```
++ import  WSACleanup
++ import  WSAStartup
++ import  __stdio_common_vsprintf
++ import  closesocket
++ import  connect
++ import  htons
++ import  inet_pton
++ import  send
++ import  socket
+- import  fclose
+- import  fopen
++ string  '10.0.0.5'
++ string  'POST /audit HTTP/1.1\r\nHost: %s\r\n\r\nuser=%s&ok=%d'
+- string  'denied'
+- string  'login attempt user=%s result=%s'
+- string  'login.log'
+```
+
+Without reading a single instruction you can already tell the file writing went away and network code came in, with the server address and what gets sent. The next step is finding which functions changed, which needs the code itself.
+
+## Tests
+
+```bash
+pip install -e .[dev]
+pytest
+```
+
+The tests build the samples with whatever `gcc` is on the machine, so on Windows they check PE files and on Linux ELF files. CI runs both.
+
+MIT license.
