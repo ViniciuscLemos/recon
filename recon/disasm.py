@@ -12,6 +12,7 @@ Only x86-64 for now.
 """
 from __future__ import annotations
 
+import hashlib
 from bisect import bisect_right
 from dataclasses import dataclass, field
 
@@ -36,6 +37,8 @@ class Function:
     data_refs: set[int] = field(default_factory=set)
     # call rax, call [rbx + 8]...: the target is only known at run time
     indirect_calls: int = 0
+    # hash of the mnemonics only, so the same code at another address still matches
+    shape: str = ""
 
 
 def _disassembler() -> capstone.Cs:
@@ -102,9 +105,12 @@ def find_functions(binary: Binary) -> dict[int, Function]:
             name = binary.symbols.get(start)
             f = Function(address=start, end=end, name=name or f"FUN_{start:08x}", named=name is not None)
             functions[start] = f
+            shape = hashlib.sha1()
             for ins in md.disasm(binary.read(start, end - start), start):
                 f.instructions += 1
+                shape.update(ins.mnemonic.encode() + b";")
                 _record(ins, f, binary, slots, thunks, new, in_code)
+            f.shape = shape.hexdigest()
         new -= starts
         if not new:
             break

@@ -28,6 +28,7 @@ def samples(tmp_path_factory):
     out = tmp_path_factory.mktemp("samples")
     return {
         "v1": _build(out, "login_v1.c", "login_v1"),
+        "v1_stripped": _build(out, "login_v1.c", "login_v1_stripped", "-s"),
         "v2": _build(out, "login_v2.c", "login_v2"),
         "v2_stripped": _build(out, "login_v2.c", "login_v2_stripped", "-s"),
     }

@@ -137,7 +137,7 @@ def _diff(old: str, new: str, as_json: bool) -> None:
         print(json.dumps(asdict(d), indent=2))
         return
     if d.empty:
-        print("no changes in imports or strings")
+        print("no changes in imports, strings or functions")
         return
     changes = (
         ("+", "can", d.capabilities_added), ("-", "can", d.capabilities_removed),
@@ -148,6 +148,23 @@ def _diff(old: str, new: str, as_json: bool) -> None:
         for item in items:
             # strings get quotes so trailing spaces and escapes are visible
             print(f"{sign} {kind:<7} {item!r}" if kind == "string" else f"{sign} {kind:<7} {item}")
+    _print_function_changes(d.functions)
+
+
+def _print_function_changes(changes) -> None:
+    sign = {"added": "+", "removed": "-", "changed": "~"}
+    for c in changes:
+        a, b = c.instructions
+        size = f"{a} -> {b} instructions" if a != b else f"{b} instructions"
+        renamed = f" (was {c.old_name})" if c.old_name else ""
+        print(f"{sign[c.kind]} func    {c.name}{renamed}, {size}")
+        details = (
+            ("+", "calls", c.calls_added + c.imports_added), ("-", "calls", c.calls_removed + c.imports_removed),
+            ("+", "uses", [repr(t) for t in c.strings_added]), ("-", "uses", [repr(t) for t in c.strings_removed]),
+        )
+        for mark, verb, items in details:
+            if items:
+                print(f"            {mark} {verb} {', '.join(items)}")
 
 
 def main(argv: list[str] | None = None) -> int:

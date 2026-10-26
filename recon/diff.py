@@ -1,13 +1,15 @@
-"""What changed between two versions of the same program, before looking at any code.
+"""What changed between two versions of the same program.
 
 Imports and strings are cheap to compare and already say a lot: v2 of the login sample stops
 calling fopen and starts calling socket/connect/send, and a server address shows up in its strings.
+When the code can be disassembled, the functions that changed come along too (see funcdiff).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from . import capabilities
+from .funcdiff import FunctionChange, compare_functions
 from .loader import Binary
 from .strings import extract
 
@@ -20,11 +22,13 @@ class Diff:
     imports_removed: list[str]
     strings_added: list[str]
     strings_removed: list[str]
+    functions: list[FunctionChange] = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
         # capabilities come from imports, so if those didn't change neither did they
-        return not (self.imports_added or self.imports_removed or self.strings_added or self.strings_removed)
+        return not (self.imports_added or self.imports_removed or self.strings_added or self.strings_removed
+                    or self.functions)
 
 
 def _import_names(binary: Binary) -> set[str]:
@@ -52,4 +56,5 @@ def compare(old: Binary, new: Binary) -> Diff:
         imports_removed=sorted(old_imports - new_imports),
         strings_added=sorted(new_strings - old_strings),
         strings_removed=sorted(old_strings - new_strings),
+        functions=compare_functions(old, new) if old.arch == new.arch == "x86-64" else [],
     )
