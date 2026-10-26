@@ -41,9 +41,12 @@ def test_imports_only_the_startup_code_uses_are_marked(samples):
         assert caps["dynamic loading"].not_from_main
 
 
-def test_nothing_is_marked_when_main_is_unknown(samples):
+def test_stripped_build_marks_the_same_as_with_symbols(samples):
     from recon import disasm
 
-    b = load(samples["v2_stripped"])
-    assert disasm.imports_from(disasm.find_functions(b)) is None
-    assert not any(c.not_from_main for c in find(b, None))
+    def marked(path):
+        b = load(path)
+        return {c.name: c.not_from_main for c in find(b, disasm.imports_from(disasm.find_functions(b)))}
+
+    # main gets guessed from the startup code, so the stripped build doesn't lose this
+    assert marked(samples["v2_stripped"]) == marked(samples["v2"])

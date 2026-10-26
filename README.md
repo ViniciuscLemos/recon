@@ -20,6 +20,7 @@ recon info program.exe       # format, what it can probably do, packing hints, s
 recon strings program.exe    # printable strings with their address
 recon funcs program.exe      # functions found in the code, with what they call
 recon func program.exe main  # one function: who calls it, what it calls, imports, strings
+recon xrefs program.exe send # who calls an import or a function, or uses a string
 recon diff old.exe new.exe   # what changed between two versions
 ```
 
@@ -33,7 +34,17 @@ Add `--json` before the command (`recon --json funcs program.exe`) to get JSON i
 
 `recon funcs` starts from what the file already gives away (entry point, exports, symbols and the x64 exception table, which lists where each function starts and ends) and then follows every direct `call` until no new functions show up. For each one it keeps the functions it calls, the imported APIs it calls and the data it points at, so a string like `"10.0.0.5"` gets tied to the code that uses it.
 
-So even with no names, `FUN_1400017f9` is clearly the one talking to the server. Its only caller prints `"Username:"`, so that one is `main`.
+So even with no names, `FUN_1400017f9` is clearly the one talking to the server, and it's called by `main`. That one name is a guess from the compiler's startup code: MinGW calls `main` right before `exit()`, and on Linux `_start` hands `main`'s address to `__libc_start_main`. It checks out, since that function is also the one printing `"Username:"`.
+
+To go the other way, from something you spotted to the code using it:
+
+```
+$ recon xrefs login_v2_stripped.exe 10.0.0.5
+string '10.0.0.5' used by (1)
+  FUN_1400017f9
+```
+
+It takes an import (`connect`), a function (shows its callers) or part of a string.
 
 MinGW took me a while. It never calls `connect` directly, it calls a tiny stub that only does `jmp [import table]`, and for a while every stub showed up as a function of its own with the network calls spread across them. A call to one of those stubs now counts as a call to the import (the PLT on Linux works the same way).
 
@@ -85,21 +96,21 @@ After that it lists the functions that changed:
 
 Which matches what I did in v2. I swapped the log function for one that reports to the server, `main` calls the new one, and `check_login` now locks the account after three failures. `hash_password` stayed the same, so it isn't listed.
 
-To pair old and new functions it tries the name first, then identical code (same instructions, even at another address), and last the imports and strings they share. So it works on stripped builds too, and comparing the two `-s` versions gives the same five changes with `FUN_` names. The last step is a guess. A function that changed a lot and uses nothing distinctive shows up as one removed and one added.
+To pair old and new functions it tries the name first, then identical code (same instructions, even at another address), and last the imports and strings they share. So it works on stripped builds too, and comparing the two `-s` versions gives the same five changes, with `FUN_` names except for `main`. The last step is a guess. A function that changed a lot and uses nothing distinctive shows up as one removed and one added.
 
 ## What a program can probably do
 
 ![recon info on login v2](docs/info.png)
 
-"Can probably" groups the imports: `socket`/`connect`/`send` is network, `fopen`/`WriteFile` is writing files, `CreateProcess` is starting other programs, and so on. Importing something doesn't mean the program calls it, so each line shows the imports behind it. Every MinGW build imports `LoadLibraryA` and `GetProcAddress` for its startup code, so "dynamic loading" shows up even in the samples. When `main` is known (the binary has symbols), `info` follows the call graph from it and marks anything `main` never reaches. On a stripped build it can't tell which function is `main` yet, so nothing gets marked.
+"Can probably" groups the imports: `socket`/`connect`/`send` is network, `fopen`/`WriteFile` is writing files, `CreateProcess` is starting other programs, and so on. Importing something doesn't mean the program calls it, so each line shows the imports behind it. Every MinGW build imports `LoadLibraryA` and `GetProcAddress` for its startup code, so "dynamic loading" shows up even in the samples. `info` follows the call graph from `main` and marks anything it never reaches. That works on stripped builds too when `main` can be guessed (MinGW and Linux so far, not MSVC yet).
 
 `info` also warns when a program looks packed (UPX and similar section names, code with entropy above 7.2, code that is also writable). Packed programs keep the real code compressed until they run, so an empty result there means little.
 
 ## Where it's at
 
-Working so far: loading PE/ELF, strings, imports and exports, capabilities, packing hints, functions and the call graph, and the diff down to the function level.
+Working so far: loading PE/ELF, strings, imports and exports, capabilities, packing hints, functions and the call graph, who uses what (xrefs), finding `main` without symbols, and the diff down to the function level.
 
-What I want to do next, more or less in this order: control flow inside a function, cross-references (who uses this string or this global), 32-bit x86, and then the AI part. Running samples in a sandbox to see what they really do is further away.
+What I want to do next, more or less in this order: control flow inside a function, references to globals, 32-bit x86, and then the AI part. Running samples in a sandbox to see what they really do is further away.
 
 ## Known limits
 
@@ -114,7 +125,7 @@ I've run it on Windows' own binaries (notepad, kernel32, ntdll, Edge) and on bro
 
 ## Code
 
-`loader.py` turns what LIEF reads into one small model for PE and ELF, and everything else works on that. `disasm.py` finds the functions and builds the call graph (NetworkX), `diff.py` and `funcdiff.py` compare two binaries, and `cli.py` is the `recon` command.
+`loader.py` turns what LIEF reads into one small model for PE and ELF, and everything else works on that. `disasm.py` finds the functions and builds the call graph (NetworkX), `xrefs.py` answers who uses what, `diff.py` and `funcdiff.py` compare two binaries, and `cli.py` is the `recon` command.
 
 ## Tests
 

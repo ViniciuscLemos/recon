@@ -1,5 +1,5 @@
-"""Command line: `recon info FILE`, `recon strings FILE`, `recon funcs FILE`, `recon func FILE NAME`
-and `recon diff OLD NEW`.
+"""Command line: `recon info FILE`, `recon strings FILE`, `recon funcs FILE`, `recon func FILE NAME`,
+`recon xrefs FILE WHAT` and `recon diff OLD NEW`.
 
 `--json` prints the same thing as JSON, for scripts (and later for the agent on top of this).
 """
@@ -15,6 +15,7 @@ from . import capabilities, disasm, packing
 from .diff import compare
 from .loader import Binary, load
 from .strings import extract
+from .xrefs import find_xrefs
 
 
 def _imports_from_main(b: Binary) -> set[str] | None:
@@ -89,6 +90,8 @@ def _strings(path: str, as_json: bool) -> None:
 def _func_data(f: disasm.Function, functions: dict, graph, strings: dict[int, str]) -> dict:
     return {
         "name": f.name,
+        # False for FUN_ names, and for main when it was guessed from the startup code
+        "named": f.named,
         "address": f.address,
         "end": f.end,
         "instructions": f.instructions,
@@ -129,7 +132,8 @@ def _func(path: str, name: str, as_json: bool) -> None:
     if as_json:
         print(json.dumps(d, indent=2))
         return
-    print(f"{d['name']} at {f.address:#x}..{f.end:#x}, {d['instructions']} instructions")
+    guessed = " (name guessed from the startup code)" if not f.named and not f.name.startswith("FUN_") else ""
+    print(f"{d['name']}{guessed} at {f.address:#x}..{f.end:#x}, {d['instructions']} instructions")
     for label, key in (("called by", "callers"), ("calls", "calls"), ("imports", "imports"), ("strings", "strings")):
         items = d[key]
         print(f"\n{label} ({len(items)})")
@@ -137,6 +141,22 @@ def _func(path: str, name: str, as_json: bool) -> None:
             print(f"  {item!r}" if key == "strings" else f"  {item}")
     if f.indirect_calls:
         print(f"\n+ {f.indirect_calls} indirect call(s) that only resolve at run time")
+
+
+def _xrefs(path: str, what: str, as_json: bool) -> None:
+    functions, _, strings = _analyze(path)
+    found = find_xrefs(functions, strings, what)
+    if as_json:
+        print(json.dumps([asdict(x) for x in found], indent=2))
+        return
+    if not found:
+        raise ValueError(f"nothing called {what} and no string containing it")
+    verb = {"import": "called by", "function": "called by", "string": "used by"}
+    for x in found:
+        target = repr(x.target) if x.kind == "string" else x.target
+        print(f"{x.kind} {target} {verb[x.kind]} ({len(x.used_by)})")
+        for name in x.used_by:
+            print(f"  {name}")
 
 
 def _diff(old: str, new: str, as_json: bool) -> None:
@@ -185,6 +205,9 @@ def main(argv: list[str] | None = None) -> int:
     fn = sub.add_parser("func", help="one function: who calls it, what it calls, imports and strings")
     fn.add_argument("file")
     fn.add_argument("name", help="name, FUN_ name or hex address")
+    x = sub.add_parser("xrefs", help="who uses an import, a function or a string")
+    x.add_argument("file")
+    x.add_argument("what", help="import name, function name or address, or part of a string")
     d = sub.add_parser("diff", help="what changed between two versions")
     d.add_argument("old")
     d.add_argument("new")
@@ -199,6 +222,8 @@ def main(argv: list[str] | None = None) -> int:
             _funcs(args.file, args.json)
         elif args.command == "func":
             _func(args.file, args.name, args.json)
+        elif args.command == "xrefs":
+            _xrefs(args.file, args.what, args.json)
         else:
             _diff(args.old, args.new, args.json)
     except (FileNotFoundError, ValueError) as e:

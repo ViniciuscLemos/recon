@@ -109,7 +109,60 @@ def find_functions(binary: Binary) -> dict[int, Function]:
         if not new:
             break
         starts |= new
+    if binary.entry is not None and not any(f.name in MAIN_NAMES for f in functions.values()):
+        guess = _guess_main(binary, functions, md, thunks)
+        if guess in functions:
+            functions[guess].name = "main"  # named stays False: it's a guess
     return functions
+
+
+MAIN_NAMES = {"main", "wmain", "WinMain", "wWinMain"}
+
+
+def _guess_main(binary: Binary, functions: dict[int, Function], md, thunks: dict[int, str]) -> int | None:
+    """Where main is when the binary has no symbols, from what the compiler's startup code does.
+
+    On Linux, _start puts main's address in rdi and calls __libc_start_main through the GOT. On
+    MinGW, the startup function calls main and then exit() with what it returned.
+    """
+    def instructions(f: Function):
+        return md.disasm(binary.read(f.address, f.end - f.address), f.address)
+
+    entry = functions.get(binary.entry)
+    if entry is None:
+        return None
+    if binary.format == "ELF":
+        rdi = None
+        for ins in instructions(entry):
+            ops = ins.operands
+            if ins.mnemonic in ("lea", "mov") and len(ops) == 2 and ops[0].type == x86.X86_OP_REG and ops[0].reg == x86.X86_REG_RDI:
+                if ops[1].type == x86.X86_OP_MEM and ops[1].mem.base == x86.X86_REG_RIP:
+                    rdi = ins.address + ins.size + ops[1].mem.disp
+                elif ops[1].type == x86.X86_OP_IMM:
+                    rdi = ops[1].imm
+            elif ins.mnemonic == "call" and ops and ops[0].type == x86.X86_OP_MEM:
+                return rdi
+        return None
+
+    # the startup function is close to the entry point: look two calls deep
+    seen, frontier = set(), [entry.address]
+    for _ in range(3):
+        nxt = []
+        for a in frontier:
+            if a in seen or a not in functions:
+                continue
+            seen.add(a)
+            last = None
+            for ins in instructions(functions[a]):
+                if ins.mnemonic != "call" or not ins.operands or ins.operands[0].type != x86.X86_OP_IMM:
+                    continue
+                target = ins.operands[0].imm
+                if thunks.get(target) == "exit" and last is not None:
+                    return last
+                last = target if target in functions else None
+            nxt.extend(functions[a].calls)
+        frontier = nxt
+    return None
 
 
 def _record(ins, f: Function, binary: Binary, slots, thunks, new: set[int], in_code) -> None:
