@@ -131,6 +131,7 @@ def _guess_main(binary: Binary, functions: dict[int, Function], md, thunks: dict
     entry = functions.get(binary.entry)
     if entry is None:
         return None
+    slots = binary.import_slots
     if binary.format == "ELF":
         rdi = None
         for ins in instructions(entry):
@@ -154,10 +155,20 @@ def _guess_main(binary: Binary, functions: dict[int, Function], md, thunks: dict
             seen.add(a)
             last = None
             for ins in instructions(functions[a]):
-                if ins.mnemonic != "call" or not ins.operands or ins.operands[0].type != x86.X86_OP_IMM:
+                if ins.mnemonic != "call" or not ins.operands:
                     continue
-                target = ins.operands[0].imm
-                if thunks.get(target) == "exit" and last is not None:
+                op = ins.operands[0]
+                if op.type == x86.X86_OP_IMM:
+                    target = op.imm
+                    callee = thunks.get(target)
+                elif op.type == x86.X86_OP_MEM and op.mem.base == x86.X86_REG_RIP:
+                    # some MinGW builds call the import through its IAT slot, with no stub
+                    target = ins.address + ins.size + op.mem.disp
+                    callee = slots[target].name if target in slots else None
+                else:
+                    last = None
+                    continue
+                if callee == "exit" and last is not None:
                     return last
                 last = target if target in functions else None
             nxt.extend(functions[a].calls)
