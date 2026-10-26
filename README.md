@@ -4,7 +4,7 @@ Point it at an unknown binary and it tries to work out what the program does, fr
 
 ![Call graph rebuilt from a binary with no function names](docs/call-graph.png)
 
-That's a small login program compiled with `-s`, so every function name is gone. RECON still finds the functions, who calls whom, and which system APIs and strings each one uses. I only know the "was" names because I compared with the build that has symbols.
+That's a small login program compiled with `-s`, so every function name is gone. RECON still finds the functions, who calls whom, and which system APIs and strings each one uses. `main` is a guess from the startup code (more on that below), and I only know the "was" names because I compared with the build that has symbols.
 
 ## Why
 
@@ -34,7 +34,7 @@ Add `--json` before the command (`recon --json funcs program.exe`) to get JSON i
 
 `recon funcs` starts from what the file already gives away (entry point, exports, symbols and the x64 exception table, which lists where each function starts and ends) and then follows every direct `call` until no new functions show up. For each one it keeps the functions it calls, the imported APIs it calls and the data it points at, so a string like `"10.0.0.5"` gets tied to the code that uses it.
 
-So even with no names, `FUN_1400017f9` is clearly the one talking to the server, and it's called by `main`. That one name is a guess from the compiler's startup code: MinGW calls `main(argc, argv, envp)` with all three read from globals, and on Linux `_start` hands `main`'s address to `__libc_start_main`. It checks out, since that function is also the one printing `"Username:"`.
+So even with no names, `FUN_1400017f9` is clearly the one talking to the server, and it's called by `main`. That one name is a guess from the compiler's startup code: MinGW calls `main(argc, argv, envp)` with all three read from globals, MSVC calls it right after `__p___argc()` (and `WinMain` with the image base as `hInstance`), and on Linux `_start` hands `main`'s address to `__libc_start_main`. On Windows' notepad.exe it lands on a function with `GetMessageW`, `TranslateMessage` and `DispatchMessageW`, which is the message loop every `WinMain` has. It checks out, since that function is also the one printing `"Username:"`.
 
 To go the other way, from something you spotted to the code using it:
 
@@ -102,7 +102,7 @@ To pair old and new functions it tries the name first, then identical code (same
 
 ![recon info on login v2](docs/info.png)
 
-"Can probably" groups the imports: `socket`/`connect`/`send` is network, `fopen`/`WriteFile` is writing files, `CreateProcess` is starting other programs, and so on. Importing something doesn't mean the program calls it, so each line shows the imports behind it. Every MinGW build imports `LoadLibraryA` and `GetProcAddress` for its startup code, so "dynamic loading" shows up even in the samples. `info` follows the call graph from `main` and marks anything it never reaches. That works on stripped builds too when `main` can be guessed (MinGW and Linux so far, not MSVC yet).
+"Can probably" groups the imports: `socket`/`connect`/`send` is network, `fopen`/`WriteFile` is writing files, `CreateProcess` is starting other programs, and so on. Importing something doesn't mean the program calls it, so each line shows the imports behind it. Every MinGW build imports `LoadLibraryA` and `GetProcAddress` for its startup code, so "dynamic loading" shows up even in the samples. `info` follows the call graph from `main` and marks anything it never reaches. That works on stripped builds too, since `main` gets guessed.
 
 `info` also warns when a program looks packed (UPX and similar section names, code with entropy above 7.2, code that is also writable). Packed programs keep the real code compressed until they run, so an empty result there means little.
 

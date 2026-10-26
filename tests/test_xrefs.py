@@ -1,3 +1,7 @@
+from pathlib import Path
+
+import pytest
+
 from recon import disasm
 from recon.cli import main
 from recon.loader import load
@@ -34,3 +38,14 @@ def test_xrefs_command(samples, capsys):
     out = capsys.readouterr().out
     assert out.startswith("string '10.0.0.5' used by (1)")
     assert main(["xrefs", str(samples["v2"]), "nothing like this"]) == 1
+
+
+WINDOWS = Path("C:/Windows/System32")
+
+
+@pytest.mark.parametrize("exe, name", [("whoami.exe", "main"), ("notepad.exe", "WinMain")])
+def test_main_is_guessed_in_msvc_programs(exe, name):
+    if not (WINDOWS / exe).exists():
+        pytest.skip("needs Windows' own programs")
+    functions = disasm.find_functions(load(WINDOWS / exe))
+    assert [f for f in functions.values() if f.name == name and not f.named]

@@ -111,19 +111,20 @@ def find_functions(binary: Binary) -> dict[int, Function]:
         starts |= new
     if binary.entry is not None and not any(f.name in MAIN_NAMES for f in functions.values()):
         guess = _guess_main(binary, functions, md, thunks)
-        if guess in functions:
-            functions[guess].name = "main"  # named stays False: it's a guess
+        if guess is not None and guess[0] in functions:
+            functions[guess[0]].name = guess[1]  # named stays False: it's a guess
     return functions
 
 
 MAIN_NAMES = {"main", "wmain", "WinMain", "wWinMain"}
 
 
-def _guess_main(binary: Binary, functions: dict[int, Function], md, thunks: dict[int, str]) -> int | None:
-    """Where main is when the binary has no symbols, from what the compiler's startup code does.
+def _guess_main(binary: Binary, functions: dict[int, Function], md, thunks: dict[int, str]) -> tuple[int, str] | None:
+    """Where main (or WinMain) is when the binary has no symbols, from what the startup code does.
 
     On Linux, _start puts main's address in rdi and calls __libc_start_main through the GOT. On
-    MinGW, the startup function calls main(argc, argv, envp) with all three read from globals.
+    MinGW, the startup function calls main(argc, argv, envp) with all three read from globals. MSVC
+    calls main right after __p___argc(), and WinMain with the image base in rcx (hInstance).
     """
     def instructions(f: Function):
         return md.disasm(binary.read(f.address, f.end - f.address), f.address)
@@ -141,7 +142,7 @@ def _guess_main(binary: Binary, functions: dict[int, Function], md, thunks: dict
                 elif ops[1].type == x86.X86_OP_IMM:
                     rdi = ops[1].imm
             elif ins.mnemonic == "call" and ops and ops[0].type == x86.X86_OP_MEM:
-                return rdi
+                return (rdi, "main") if rdi is not None else None
         return None
 
     # the startup function is close to the entry point: look two calls deep
@@ -154,9 +155,34 @@ def _guess_main(binary: Binary, functions: dict[int, Function], md, thunks: dict
             seen.add(a)
             found = _call_with_three_globals(instructions(functions[a]), functions, thunks)
             if found is not None:
+                return found, "main"
+            found = _msvc_main(binary, instructions(functions[a]), functions, thunks)
+            if found is not None:
                 return found
             nxt.extend(functions[a].calls)
         frontier = nxt
+    return None
+
+
+def _msvc_main(binary: Binary, instructions, functions: dict[int, Function], thunks: dict[int, str]) -> tuple[int, str] | None:
+    slots = binary.import_slots
+    after = None  # what the next call to a function of the program would be
+    for ins in instructions:
+        ops = ins.operands
+        if ins.mnemonic == "lea" and len(ops) == 2 and ops[0].type == x86.X86_OP_REG and ops[1].type == x86.X86_OP_MEM                 and ops[1].mem.base == x86.X86_REG_RIP and ins.reg_name(ops[0].reg) == "rcx"                 and ins.address + ins.size + ops[1].mem.disp == binary.image_base:
+            after = "WinMain"
+        elif ins.mnemonic == "call" and ops:
+            op = ops[0]
+            if op.type == x86.X86_OP_IMM and op.imm in thunks:
+                callee = thunks[op.imm]
+            elif op.type == x86.X86_OP_MEM and op.mem.base == x86.X86_REG_RIP:
+                slot = slots.get(ins.address + ins.size + op.mem.disp)
+                callee = slot.name if slot else None
+            elif op.type == x86.X86_OP_IMM and op.imm in functions and after:
+                return op.imm, after
+            else:
+                callee = None
+            after = "main" if callee == "__p___argc" else None
     return None
 
 
@@ -261,7 +287,8 @@ def imports_from(functions: dict[int, Function], name: str = "main") -> set[str]
     """Imports called by a function or anything it calls, directly or not. None if it isn't found."""
     import networkx as nx
 
-    start = next((f for f in functions.values() if f.name == name), None)
+    names = MAIN_NAMES if name == "main" else {name}
+    start = next((f for f in functions.values() if f.name in names), None)
     if start is None:
         return None
     reached = {start.address} | nx.descendants(call_graph(functions), start.address)
