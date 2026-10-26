@@ -139,6 +139,10 @@ def _record(ins, f: Function, binary: Binary, slots, thunks, new: set[int], in_c
                 f.imports.add(slots[target].name)
             elif not in_code(target) and binary.section_at(target) is not None:
                 f.data_refs.add(target)
+            elif ins.mnemonic == "lea" and in_code(target) and not (f.address <= target < f.end) and target not in thunks:
+                # the address of code taken as a value: a callback, or main on Linux, which _start
+                # only hands to __libc_start_main and never calls
+                new.add(target)
         elif op.type in (x86.X86_OP_REG, x86.X86_OP_MEM) and is_call:
             f.indirect_calls += 1
 
