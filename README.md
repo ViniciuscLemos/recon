@@ -34,7 +34,7 @@ Add `--json` before the command (`recon --json funcs program.exe`) to get JSON i
 
 `recon funcs` starts from what the file already gives away (entry point, exports, symbols and the x64 exception table, which lists where each function starts and ends) and then follows every direct `call` until no new functions show up. For each one it keeps the functions it calls, the imported APIs it calls and the data it points at, so a string like `"10.0.0.5"` gets tied to the code that uses it.
 
-So even with no names, `FUN_1400017f9` is clearly the one talking to the server, and it's called by `main`. That one name is a guess from the compiler's startup code: MinGW calls `main` right before `exit()`, and on Linux `_start` hands `main`'s address to `__libc_start_main`. It checks out, since that function is also the one printing `"Username:"`.
+So even with no names, `FUN_1400017f9` is clearly the one talking to the server, and it's called by `main`. That one name is a guess from the compiler's startup code: MinGW calls `main(argc, argv, envp)` with all three read from globals, and on Linux `_start` hands `main`'s address to `__libc_start_main`. It checks out, since that function is also the one printing `"Username:"`.
 
 To go the other way, from something you spotted to the code using it:
 

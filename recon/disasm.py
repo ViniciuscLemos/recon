@@ -123,7 +123,7 @@ def _guess_main(binary: Binary, functions: dict[int, Function], md, thunks: dict
     """Where main is when the binary has no symbols, from what the compiler's startup code does.
 
     On Linux, _start puts main's address in rdi and calls __libc_start_main through the GOT. On
-    MinGW, the startup function calls main and then exit() with what it returned.
+    MinGW, the startup function calls main(argc, argv, envp) with all three read from globals.
     """
     def instructions(f: Function):
         return md.disasm(binary.read(f.address, f.end - f.address), f.address)
@@ -131,7 +131,6 @@ def _guess_main(binary: Binary, functions: dict[int, Function], md, thunks: dict
     entry = functions.get(binary.entry)
     if entry is None:
         return None
-    slots = binary.import_slots
     if binary.format == "ELF":
         rdi = None
         for ins in instructions(entry):
@@ -153,26 +152,44 @@ def _guess_main(binary: Binary, functions: dict[int, Function], md, thunks: dict
             if a in seen or a not in functions:
                 continue
             seen.add(a)
-            last = None
-            for ins in instructions(functions[a]):
-                if ins.mnemonic != "call" or not ins.operands:
-                    continue
-                op = ins.operands[0]
-                if op.type == x86.X86_OP_IMM:
-                    target = op.imm
-                    callee = thunks.get(target)
-                elif op.type == x86.X86_OP_MEM and op.mem.base == x86.X86_REG_RIP:
-                    # some MinGW builds call the import through its IAT slot, with no stub
-                    target = ins.address + ins.size + op.mem.disp
-                    callee = slots[target].name if target in slots else None
-                else:
-                    last = None
-                    continue
-                if callee == "exit" and last is not None:
-                    return last
-                last = target if target in functions else None
+            found = _call_with_three_globals(instructions(functions[a]), functions, thunks)
+            if found is not None:
+                return found
             nxt.extend(functions[a].calls)
         frontier = nxt
+    return None
+
+
+def _full_reg(ins, reg: int) -> str:
+    # ecx and rcx, r8d and r8 are the same register for this
+    name = ins.reg_name(reg)
+    if len(name) == 3 and name[0] == "e":
+        return "r" + name[1:]
+    return name.rstrip("d")
+
+
+def _call_with_three_globals(instructions, functions: dict[int, Function], thunks: dict[int, str]) -> int | None:
+    """The first call to a function of the program with rcx, rdx and r8 all holding values read from
+    globals, directly or copied through another register. That's how MinGW calls main."""
+    from_globals: set[str] = set()
+    for ins in instructions:
+        ops = ins.operands
+        if ins.mnemonic == "call":
+            target = ops[0].imm if ops and ops[0].type == x86.X86_OP_IMM else None
+            if {"rcx", "rdx", "r8"} <= from_globals and target in functions and target not in thunks:
+                return target
+            from_globals.clear()
+        elif ins.mnemonic == "mov" and len(ops) == 2 and ops[0].type == x86.X86_OP_REG:
+            dest = _full_reg(ins, ops[0].reg)
+            src = ops[1]
+            if src.type == x86.X86_OP_MEM and src.mem.base == x86.X86_REG_RIP:
+                from_globals.add(dest)
+            elif src.type == x86.X86_OP_REG and _full_reg(ins, src.reg) in from_globals:
+                from_globals.add(dest)
+            else:
+                from_globals.discard(dest)
+        elif ops and ops[0].type == x86.X86_OP_REG and ins.mnemonic not in ("cmp", "test", "push"):
+            from_globals.discard(_full_reg(ins, ops[0].reg))
     return None
 
 
