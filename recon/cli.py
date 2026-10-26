@@ -1,4 +1,5 @@
-"""Command line: `recon info FILE`, `recon strings FILE` and `recon diff OLD NEW`.
+"""Command line: `recon info FILE`, `recon strings FILE`, `recon funcs FILE`, `recon func FILE NAME`
+and `recon diff OLD NEW`.
 
 `--json` prints the same thing as JSON, for scripts (and later for the agent on top of this).
 """
@@ -10,7 +11,7 @@ import os
 import sys
 from dataclasses import asdict
 
-from . import capabilities, packing
+from . import capabilities, disasm, packing
 from .diff import compare
 from .loader import Binary, load
 from .strings import extract
@@ -77,6 +78,59 @@ def _strings(path: str, as_json: bool) -> None:
         print(f"{s.address:#012x}  {s.section:<8} {s.text!r}")
 
 
+def _func_data(f: disasm.Function, functions: dict, graph, strings: dict[int, str]) -> dict:
+    return {
+        "name": f.name,
+        "address": f.address,
+        "end": f.end,
+        "instructions": f.instructions,
+        "callers": sorted(functions[a].name for a in graph.predecessors(f.address)),
+        "calls": sorted(functions[a].name for a in f.calls if a in functions),
+        "imports": sorted(f.imports),
+        "strings": [strings[a] for a in sorted(f.data_refs) if a in strings],
+        "indirect_calls": f.indirect_calls,
+    }
+
+
+def _analyze(path: str):
+    b = load(path)
+    functions = disasm.find_functions(b)
+    strings = {s.address: s.text for s in extract(b)}
+    return functions, disasm.call_graph(functions), strings
+
+
+def _funcs(path: str, as_json: bool) -> None:
+    functions, graph, strings = _analyze(path)
+    data = [_func_data(f, functions, graph, strings) for f in functions.values()]
+    if as_json:
+        print(json.dumps(data, indent=2))
+        return
+    width = max([8, *(len(d["name"]) for d in data)])
+    print(f"{'address':<12} {'name':<{width}} {'ins':>5} {'callers':>7} {'calls':>5}  imports")
+    for d in data:
+        print(f"{d['address']:#012x} {d['name']:<{width}} {d['instructions']:>5} {len(d['callers']):>7} "
+              f"{len(d['calls']):>5}  {', '.join(d['imports'])}")
+
+
+def _func(path: str, name: str, as_json: bool) -> None:
+    functions, graph, strings = _analyze(path)
+    f = disasm.find(functions, name)
+    if f is None:
+        raise ValueError(f"no function called {name} (try `recon funcs` for the list)")
+    d = _func_data(f, functions, graph, strings)
+    if as_json:
+        print(json.dumps(d, indent=2))
+        return
+    print(f"{d['name']} at {f.address:#x}..{f.end:#x}, {d['instructions']} instructions")
+    for label, key in (("called by", "callers"), ("calls", "calls"), ("imports", "imports"), ("strings", "strings")):
+        items = d[key]
+        print(f"\n{label} ({len(items)})")
+        for item in items:
+            print(f"  {item!r}" if key == "strings" else f"  {item}")
+    if f.indirect_calls:
+        print(f"\n+ {f.indirect_calls} indirect call(s) that only resolve at run time")
+
+
 def _diff(old: str, new: str, as_json: bool) -> None:
     d = compare(load(old), load(new))
     if as_json:
@@ -102,6 +156,10 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("info", help="format, what it can probably do, sections and imports").add_argument("file")
     sub.add_parser("strings", help="printable strings with their address").add_argument("file")
+    sub.add_parser("funcs", help="functions found in the code, with what they call").add_argument("file")
+    fn = sub.add_parser("func", help="one function: who calls it, what it calls, imports and strings")
+    fn.add_argument("file")
+    fn.add_argument("name", help="name, FUN_ name or hex address")
     d = sub.add_parser("diff", help="what changed between two versions")
     d.add_argument("old")
     d.add_argument("new")
@@ -112,6 +170,10 @@ def main(argv: list[str] | None = None) -> int:
             _info(args.file, args.json)
         elif args.command == "strings":
             _strings(args.file, args.json)
+        elif args.command == "funcs":
+            _funcs(args.file, args.json)
+        elif args.command == "func":
+            _func(args.file, args.name, args.json)
         else:
             _diff(args.old, args.new, args.json)
     except (FileNotFoundError, ValueError) as e:
