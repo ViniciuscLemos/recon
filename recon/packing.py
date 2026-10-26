@@ -1,7 +1,6 @@
-"""Signs that the code was packed or encrypted, which hides most of what the other steps look for.
+"""Hints that the code is packed or encrypted.
 
-A packed program keeps its real code compressed and unpacks it in memory when it starts, so its
-imports and strings say little. Recognizing that early tells you not to trust an empty result.
+A packed program unpacks its real code in memory when it starts, so its imports and strings say little.
 """
 from __future__ import annotations
 

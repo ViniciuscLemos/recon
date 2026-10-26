@@ -1,11 +1,7 @@
-"""Which functions changed between two versions, and how.
+"""Which functions were added, removed or changed between two versions.
 
-Functions are paired in three passes: same name (when the binary has symbols), then identical code
-(same sequence of mnemonics, so it survives moving to another address), and last the closest match
-by the imports and strings each one uses. Whatever is left unpaired was added or removed.
-
-The last pass is a guess. On a stripped binary a function that changed a lot and uses nothing
-distinctive shows up as one removed and one added instead of one changed.
+Old and new functions are paired by name, then by identical code, then by the imports and strings
+they share. The last one is a guess, so a function that changed a lot can come out as removed + added.
 """
 from __future__ import annotations
 
@@ -117,7 +113,7 @@ def compare_functions(old_binary: Binary, new_binary: Binary) -> list[FunctionCh
         f, g = old.functions[a], new.functions[b]
         old_calls = {renamed.get(n, n) for n in _names(old.functions, f.calls)}
         new_calls = _names(new.functions, g.calls)
-        # same code calling a different function is still a change (main calling the new reporter)
+        # same code calling a different function still counts as a change
         if f.shape == g.shape and f.imports == g.imports and old.strings[a] == new.strings[b] and old_calls == new_calls:
             continue
         changes.append(FunctionChange(

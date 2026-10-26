@@ -1,7 +1,6 @@
-"""Printable strings in the binary, with the address each one lives at.
+"""Printable strings in the binary, with their address.
 
-Addresses matter more than the text: they're how the disassembler later links a string to the
-code that uses it (a `lea rcx, [rip + x]` pointing at "Invalid username or password").
+The address is what the disassembler uses to tie a string to the code that loads it.
 """
 from __future__ import annotations
 

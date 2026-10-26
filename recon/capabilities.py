@@ -1,8 +1,6 @@
-"""Groups imported functions into things a program can do: talk to the network, write files...
+"""Groups imported functions into things a program can do: network, writing files, starting processes...
 
-It's the first, rough answer to "what does this program do?". An import only says the program
-*can* call something, not that it does or when, so every capability keeps the imports behind it
-as evidence. The code analysis later is what confirms or rules them out.
+An import doesn't mean the program calls it, so each capability keeps the imports behind it.
 """
 from __future__ import annotations
 

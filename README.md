@@ -4,13 +4,13 @@ Point it at an unknown binary and it tries to work out what the program does, fr
 
 ![Call graph rebuilt from a binary with no function names](docs/call-graph.png)
 
-That's a small login program compiled with `-s`, so every function name is gone. RECON still finds the functions, who calls whom, and which system APIs and strings each one uses. The "was" names are only there because I checked them against the build with symbols afterwards.
+That's a small login program compiled with `-s`, so every function name is gone. RECON still finds the functions, who calls whom, and which system APIs and strings each one uses. I only know the "was" names because I compared with the build that has symbols.
 
-## Why I'm making this
+## Why
 
-A lot of "AI reverse engineering" demos throw the whole binary at a model and hope for the best. I wanted to build the boring part first: the actual analysis, done with real tools, that produces evidence you can check. The plan is for an AI agent to sit on top of that later and answer questions like "which function does the authentication?" by navigating the analysis, citing what it found.
+I wanted to understand how tools like Ghidra figure out where the functions are and what calls what, so I'm writing those pieces myself. Later I want to put an AI agent on top, one that answers things like "where is the login checked?" by looking through what the analysis found, without reading the whole binary.
 
-It's also the excuse I needed to learn PE/ELF internals, x86-64 and disassembly properly.
+It's also a good excuse to finally learn PE/ELF and x86-64 properly.
 
 ## Try it
 
@@ -33,11 +33,11 @@ Add `--json` before the command (`recon --json funcs program.exe`) to get JSON i
 
 `recon funcs` starts from what the file already gives away (entry point, exports, symbols and the x64 exception table, which lists where each function starts and ends) and then follows every direct `call` until no new functions show up. For each one it keeps the functions it calls, the imported APIs it calls and the data it points at, so a string like `"10.0.0.5"` gets tied to the code that uses it.
 
-So even with no names, `FUN_1400017f9` is obviously the one talking to the server, and its only caller is the function that prints `"Username:"`, which makes that one `main`.
+So even with no names, `FUN_1400017f9` is clearly the one talking to the server. Its only caller prints `"Username:"`, so that one is `main`.
 
-The part that took me a while: MinGW never calls `connect` directly. It calls a tiny stub that only does `jmp [import table]`, and at first every stub showed up as a function of its own, with the network calls spread across them. Now a call to one of those stubs counts as a call to the import (Linux does the same thing with the PLT).
+MinGW took me a while. It never calls `connect` directly, it calls a tiny stub that only does `jmp [import table]`, and for a while every stub showed up as a function of its own with the network calls spread across them. A call to one of those stubs now counts as a call to the import (the PLT on Linux works the same way).
 
-On a real program it holds up too. Windows' notepad.exe has 423 functions, found in about 2 seconds, and this is one of them:
+I also tried it on Windows' notepad.exe. It finds 423 functions in about 2 seconds, and this is one of them:
 
 ```
 $ recon func notepad.exe FUN_14000ca10
@@ -83,23 +83,23 @@ After that it lists the functions that changed:
             - calls log_attempt
 ```
 
-That's exactly what I changed in the source: the log function was swapped for one that reports to the server, `main` calls the new one, and `check_login` got the lockout after three failures. `hash_password` didn't change, so it isn't listed.
+Which matches what I did in v2. I swapped the log function for one that reports to the server, `main` calls the new one, and `check_login` now locks the account after three failures. `hash_password` stayed the same, so it isn't listed.
 
-To know which old function is which new one, it pairs them by name first, then by identical code (the same sequence of instructions, even at another address), and last by the imports and strings they share. That's why it works on stripped builds too: comparing the two `-s` versions gives the same five changes, just with `FUN_` names. The last step is a guess, though. A function that changed a lot and uses nothing distinctive shows up as one removed and one added.
+To pair old and new functions it tries the name first, then identical code (same instructions, even at another address), and last the imports and strings they share. So it works on stripped builds too, and comparing the two `-s` versions gives the same five changes with `FUN_` names. The last step is a guess. A function that changed a lot and uses nothing distinctive shows up as one removed and one added.
 
 ## What a program can probably do
 
 ![recon info on login v2](docs/info.png)
 
-"Can probably" comes from grouping the imports: `socket`/`connect`/`send` mean network, `fopen`/`WriteFile` mean writing files, `CreateProcess` means starting other programs, and so on. An import only says the program *can* call something, so each one is listed with the imports behind it. Some come from the compiler's startup code: every MinGW build imports `LoadLibraryA` and `GetProcAddress`, so "dynamic loading" shows up even in the samples. Now that functions are mapped, the next step is only counting imports that the program's own code calls.
+"Can probably" groups the imports: `socket`/`connect`/`send` is network, `fopen`/`WriteFile` is writing files, `CreateProcess` is starting other programs, and so on. Importing something doesn't mean the program calls it, so each line shows the imports behind it. Every MinGW build imports `LoadLibraryA` and `GetProcAddress` for its startup code, which is why "dynamic loading" shows up even in the samples. Now that I know which function calls what, I want to count only the imports the program's own code uses.
 
-`info` also warns when a program looks packed (UPX and similar section names, code with entropy above 7.2, code that is also writable). A packed program keeps its real code compressed until it runs, so its imports and strings say very little, and an empty result shouldn't be trusted.
+`info` also warns when a program looks packed (UPX and similar section names, code with entropy above 7.2, code that is also writable). Packed programs keep the real code compressed until they run, so an empty result there means little.
 
 ## Where it's at
 
-Done: loading PE/ELF, strings, imports and exports, capabilities, packing hints, finding functions with the call graph, and the version diff down to which functions changed.
+Working so far: loading PE/ELF, strings, imports and exports, capabilities, packing hints, functions and the call graph, and the diff down to the function level.
 
-Next, roughly in this order: control flow inside a function and cross-references (who uses this string or this global), 32-bit x86, then the AI layer that answers questions with evidence from all of this. Running samples in a sandbox to watch what they actually do is further out.
+What I want to do next, more or less in this order: control flow inside a function, cross-references (who uses this string or this global), 32-bit x86, and then the AI part. Running samples in a sandbox to see what they really do is further away.
 
 ## Known limits
 
@@ -110,11 +110,11 @@ Next, roughly in this order: control flow inside a function and cross-references
 - Calls through a register (`call rax`, virtual methods, callbacks) are only counted, not followed.
 - The disassembly is x86-64 only. ARM files load, but nothing past the headers has been checked on them.
 
-Testing it on Windows' own binaries (notepad, kernel32, ntdll, Edge) and on broken files turned up a few things that are handled now: MinGW names its longer sections `/4`, `/29`... and the real name (`.debug_info`) sits in a table at the end of the file, a DLL with no entry point used to show the image base as its entry, and a file cut short used to load quietly with nothing in it, which looks just like a program that does nothing.
+I've run it on Windows' own binaries (notepad, kernel32, ntdll, Edge) and on broken files. It reads MinGW's long section names (`/4`, `/29`... point to the real name in a table at the end of the file), shows no entry point for a DLL that has none, and warns when a file is cut short instead of loading it as an empty program.
 
-## How the code is split
+## Code
 
-`loader.py` turns what LIEF reads into one small model for both formats, so nothing after it cares whether it's PE or ELF. `strings.py`, `capabilities.py` and `packing.py` work on that model, `disasm.py` finds the functions and builds the call graph (NetworkX), `diff.py` and `funcdiff.py` compare two binaries, and `cli.py` is the `recon` command.
+`loader.py` turns what LIEF reads into one small model for PE and ELF, and everything else works on that. `disasm.py` finds the functions and builds the call graph (NetworkX), `diff.py` and `funcdiff.py` compare two binaries, and `cli.py` is the `recon` command.
 
 ## Tests
 

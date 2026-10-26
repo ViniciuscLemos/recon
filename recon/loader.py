@@ -1,8 +1,4 @@
-"""Opens a PE or ELF file and turns what LIEF reads into a small, format-independent model.
-
-Everything after this module works with virtual addresses and plain dataclasses, so the rest of
-RECON doesn't need to know which format it is looking at.
-"""
+"""Opens a PE or ELF file and turns what LIEF reads into a small model that works the same for both."""
 from __future__ import annotations
 
 import io

@@ -1,14 +1,8 @@
-"""Finds the functions in the code and what each one touches.
+"""Finds the functions in the code and what each one calls and uses. x86-64 only for now.
 
-Function starts come from everything the binary already says (entry point, exports, symbols,
-the x64 exception table) plus the targets of every direct call found while disassembling, until no
-new ones turn up. A function runs to its exception-table end when there is one, or else to the next
-known start. That's simpler than a full control-flow recovery and works well on compiler output;
-hand-written or obfuscated code can fool it.
-
-For each function it records the functions it calls, the imported APIs it calls (through the IAT on
-PE or a PLT stub on ELF) and the data it points at, which is how strings get tied to code.
-Only x86-64 for now.
+Starts come from the entry point, exports, symbols and the x64 exception table, plus every direct
+call target found along the way. A function ends where the exception table says, or at the next
+known start, which is fine for compiler output but not for hand-written or obfuscated code.
 """
 from __future__ import annotations
 
