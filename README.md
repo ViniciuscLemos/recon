@@ -64,7 +64,28 @@ Opens a file, reads it and checks whether the text is Unicode. Pretty sure that'
 
 ![recon diff between login v1 and v2](docs/diff.png)
 
-`recon diff` compares imports, strings and what each version can probably do. Without reading a single instruction you can tell the file writing went away and network code came in, with the server address and what gets sent. Telling *which functions* changed is the next thing I'm building.
+`recon diff` compares imports, strings and what each version can probably do. Without reading a single instruction you can tell the file writing went away and network code came in, with the server address and what gets sent.
+
+After that it lists the functions that changed:
+
+```
++ func    report_attempt, 55 instructions
+            + calls snprintf, WSACleanup, WSAStartup, closesocket, connect, htons, inet_pton, send, socket, strlen
+            + uses '10.0.0.5', 'POST /audit HTTP/1.1\r\nHost: %s\r\n\r\nuser=%s&ok=%d'
++ func    snprintf, 30 instructions
+            + calls __local_stdio_printf_options, __stdio_common_vsprintf
+- func    log_attempt, 24 instructions
+            - calls fprintf, fclose, fopen
+            - uses 'denied', 'login attempt user=%s result=%s', 'login.log'
+~ func    check_login, 16 -> 23 instructions
+~ func    main, 39 instructions
+            + calls report_attempt
+            - calls log_attempt
+```
+
+That's exactly what I changed in the source: the log function was swapped for one that reports to the server, `main` calls the new one, and `check_login` got the lockout after three failures. `hash_password` didn't change, so it isn't listed.
+
+To know which old function is which new one, it pairs them by name first, then by identical code (the same sequence of instructions, even at another address), and last by the imports and strings they share. That's why it works on stripped builds too: comparing the two `-s` versions gives the same five changes, just with `FUN_` names. The last step is a guess, though. A function that changed a lot and uses nothing distinctive shows up as one removed and one added.
 
 ## What a program can probably do
 
@@ -76,9 +97,9 @@ Opens a file, reads it and checks whether the text is Unicode. Pretty sure that'
 
 ## Where it's at
 
-Done: loading PE/ELF, strings, imports and exports, capabilities, packing hints, the version diff, and finding functions with the call graph.
+Done: loading PE/ELF, strings, imports and exports, capabilities, packing hints, finding functions with the call graph, and the version diff down to which functions changed.
 
-Next, roughly in this order: which functions changed between two versions, control flow inside a function and cross-references (who uses this string or this global), 32-bit x86, then the AI layer that answers questions with evidence from all of this. Running samples in a sandbox to watch what they actually do is further out.
+Next, roughly in this order: control flow inside a function and cross-references (who uses this string or this global), 32-bit x86, then the AI layer that answers questions with evidence from all of this. Running samples in a sandbox to watch what they actually do is further out.
 
 ## Known limits
 
@@ -93,7 +114,7 @@ Testing it on Windows' own binaries (notepad, kernel32, ntdll, Edge) and on brok
 
 ## How the code is split
 
-`loader.py` turns what LIEF reads into one small model for both formats, so nothing after it cares whether it's PE or ELF. `strings.py`, `capabilities.py` and `packing.py` work on that model, `disasm.py` finds the functions and builds the call graph (NetworkX), `diff.py` compares two binaries, and `cli.py` is the `recon` command.
+`loader.py` turns what LIEF reads into one small model for both formats, so nothing after it cares whether it's PE or ELF. `strings.py`, `capabilities.py` and `packing.py` work on that model, `disasm.py` finds the functions and builds the call graph (NetworkX), `diff.py` and `funcdiff.py` compare two binaries, and `cli.py` is the `recon` command.
 
 ## Tests
 
