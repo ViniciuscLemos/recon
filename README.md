@@ -91,7 +91,7 @@ To pair old and new functions it tries the name first, then identical code (same
 
 ![recon info on login v2](docs/info.png)
 
-"Can probably" groups the imports: `socket`/`connect`/`send` is network, `fopen`/`WriteFile` is writing files, `CreateProcess` is starting other programs, and so on. Importing something doesn't mean the program calls it, so each line shows the imports behind it. Every MinGW build imports `LoadLibraryA` and `GetProcAddress` for its startup code, which is why "dynamic loading" shows up even in the samples. Now that I know which function calls what, I want to count only the imports the program's own code uses.
+"Can probably" groups the imports: `socket`/`connect`/`send` is network, `fopen`/`WriteFile` is writing files, `CreateProcess` is starting other programs, and so on. Importing something doesn't mean the program calls it, so each line shows the imports behind it. Every MinGW build imports `LoadLibraryA` and `GetProcAddress` for its startup code, so "dynamic loading" shows up even in the samples. When `main` is known (the binary has symbols), `info` follows the call graph from it and marks anything `main` never reaches. On a stripped build it can't tell which function is `main` yet, so nothing gets marked.
 
 `info` also warns when a program looks packed (UPX and similar section names, code with entropy above 7.2, code that is also writable). Packed programs keep the real code compressed until they run, so an empty result there means little.
 

@@ -17,6 +17,13 @@ from .loader import Binary, load
 from .strings import extract
 
 
+def _imports_from_main(b: Binary) -> set[str] | None:
+    try:
+        return disasm.imports_from(disasm.find_functions(b))
+    except ValueError:  # not x86-64
+        return None
+
+
 def _info_data(b: Binary) -> dict:
     return {
         "file": b.path.name,
@@ -26,7 +33,7 @@ def _info_data(b: Binary) -> dict:
         "sections": [asdict(s) for s in b.sections],
         "imports": [asdict(i) for i in b.imports],
         "exports": sorted(b.exports.values()),
-        "capabilities": [asdict(c) for c in capabilities.find(b)],
+        "capabilities": [asdict(c) for c in capabilities.find(b, _imports_from_main(b))],
         "packing": [asdict(h) for h in packing.hints(b)],
         "strings": len(extract(b)),
         "warnings": b.warnings,
@@ -51,7 +58,8 @@ def _info(path: str, as_json: bool) -> None:
         print(f"may be packed: {h['section']}: {h['reason']}")
     print("\ncan probably")
     for c in data["capabilities"] or [{"name": "(nothing from the known imports)", "evidence": []}]:
-        print(f"  {c['name']:<26} {', '.join(c['evidence'])}")
+        note = "  (not reached from main)" if c.get("not_from_main") else ""
+        print(f"  {c['name']:<26} {', '.join(c['evidence'])}{note}")
     print(f"\nsections ({len(b.sections)})")
     width = max([12, *(len(s.name) for s in b.sections)])
     for s in b.sections:

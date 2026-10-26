@@ -174,3 +174,14 @@ def find(functions: dict[int, Function], name_or_address: str) -> Function | Non
         return function_at(functions, int(text, 16))
     except ValueError:
         return None
+
+
+def imports_from(functions: dict[int, Function], name: str = "main") -> set[str] | None:
+    """Imports called by a function or anything it calls, directly or not. None if it isn't found."""
+    import networkx as nx
+
+    start = next((f for f in functions.values() if f.name == name), None)
+    if start is None:
+        return None
+    reached = {start.address} | nx.descendants(call_graph(functions), start.address)
+    return set().union(*(functions[a].imports for a in reached))

@@ -28,3 +28,22 @@ def test_win32_ansi_and_wide_names_and_runtime_prefixes():
     assert _group_of("ShellExecuteA") == "process"
     assert _group_of("_open") == "file write"
     assert _group_of("strcmp") is None
+
+
+def test_imports_only_the_startup_code_uses_are_marked(samples):
+    from recon import disasm
+
+    b = load(samples["v2"])
+    caps = {c.name: c for c in find(b, disasm.imports_from(disasm.find_functions(b)))}
+    assert not caps["network"].not_from_main
+    assert not caps["user input"].not_from_main
+    if "dynamic loading" in caps:  # MinGW's startup code, not the program
+        assert caps["dynamic loading"].not_from_main
+
+
+def test_nothing_is_marked_when_main_is_unknown(samples):
+    from recon import disasm
+
+    b = load(samples["v2_stripped"])
+    assert disasm.imports_from(disasm.find_functions(b)) is None
+    assert not any(c.not_from_main for c in find(b, None))

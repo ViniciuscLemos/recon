@@ -57,12 +57,19 @@ def _group_of(name: str) -> str | None:
 class Capability:
     name: str
     evidence: list[str]  # the imports that point to it
+    # none of the evidence is called from main or what it calls, so it's probably the compiler's
+    # startup code (MinGW imports LoadLibraryA for that); False when main isn't known
+    not_from_main: bool = False
 
 
-def find(binary: Binary) -> list[Capability]:
+def find(binary: Binary, from_main: set[str] | None = None) -> list[Capability]:
+    """`from_main` is the imports main reaches, when the code could be followed from it."""
     found: dict[str, set[str]] = {}
     for imp in binary.imports:
         group = _group_of(imp.name)
         if group:
             found.setdefault(group, set()).add(imp.name)
-    return [Capability(name, sorted(evidence)) for name, evidence in sorted(found.items())]
+    return [
+        Capability(name, sorted(evidence), not_from_main=from_main is not None and not evidence & from_main)
+        for name, evidence in sorted(found.items())
+    ]
