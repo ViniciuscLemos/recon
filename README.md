@@ -37,7 +37,7 @@ So even with no names, `FUN_1400017f9` is obviously the one talking to the serve
 
 The part that took me a while: MinGW never calls `connect` directly. It calls a tiny stub that only does `jmp [import table]`, and at first every stub showed up as a function of its own, with the network calls spread across them. Now a call to one of those stubs counts as a call to the import (Linux does the same thing with the PLT).
 
-On a real program it holds up too. Windows' notepad.exe has 419 functions, found in about 2 seconds, and this is one of them:
+On a real program it holds up too. Windows' notepad.exe has 423 functions, found in about 2 seconds, and this is one of them:
 
 ```
 $ recon func notepad.exe FUN_14000ca10
